@@ -74,6 +74,7 @@ const posixShellTypeMap = new Map<string, PosixShellType>([
 	['sh', PosixShellType.Sh],
 	['pwsh', PosixShellType.PowerShell],
 	['python', PosixShellType.Python],
+	['julia', PosixShellType.Julia],
 	['zsh', PosixShellType.Zsh]
 ]);
 
@@ -153,6 +154,7 @@ export class TerminalProcess extends Disposable implements ITerminalChildProcess
 		this._properties[ProcessPropertyType.InitialCwd] = this._initialCwd;
 		this._properties[ProcessPropertyType.Cwd] = this._initialCwd;
 		const useConpty = this._options.windowsEnableConpty && process.platform === 'win32' && getWindowsBuildNumber() >= 18309;
+		const useConptyDll = useConpty && this._options.windowsUseConptyDll;
 		this._ptyOptions = {
 			name,
 			cwd,
@@ -161,6 +163,7 @@ export class TerminalProcess extends Disposable implements ITerminalChildProcess
 			cols,
 			rows,
 			useConpty,
+			useConptyDll,
 			// This option will force conpty to not redraw the whole viewport on launch
 			conptyInheritCursor: useConpty && !!shellLaunchConfig.initialText
 		};
@@ -409,6 +412,8 @@ export class TerminalProcess extends Disposable implements ITerminalChildProcess
 
 		if (sanitizedTitle.toLowerCase().startsWith('python')) {
 			this._onDidChangeProperty.fire({ type: ProcessPropertyType.ShellType, value: PosixShellType.Python });
+		} else if (sanitizedTitle.toLowerCase().startsWith('julia')) {
+			this._onDidChangeProperty.fire({ type: ProcessPropertyType.ShellType, value: PosixShellType.Julia });
 		} else {
 			this._onDidChangeProperty.fire({ type: ProcessPropertyType.ShellType, value: posixShellTypeMap.get(sanitizedTitle) });
 		}
