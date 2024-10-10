@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IDragAndDropData } from '../../dnd.js';
-import { IIdentityProvider, IKeyboardNavigationLabelProvider, IListDragAndDrop, IListDragOverReaction, IListVirtualDelegate } from '../list/list.js';
+import { IIdentityProvider, IListDragAndDrop, IListDragOverReaction, IListVirtualDelegate } from '../list/list.js';
 import { ElementsDragAndDropData, ListViewTargetSector } from '../list/listView.js';
 import { IListStyles } from '../list/listWidget.js';
 import { ComposedTreeDelegate, TreeFindMode as TreeFindMode, IAbstractTreeOptions, IAbstractTreeOptionsUpdate, TreeFindMatchType, AbstractTreePart, LabelFuzzyScore, IFindFilter, AbstractFindController, ITreeFindToggleContribution, ITreeFindToggleChangeEvent } from './abstractTree.js';
@@ -24,7 +24,7 @@ import { isIterable, isNumber } from '../../../common/types.js';
 import { CancellationToken, CancellationTokenSource } from '../../../common/cancellation.js';
 import { IObjectTreeModel } from './objectTreeModel.js';
 import { IContextViewProvider } from '../contextview/contextview.js';
-import { fuzzyScore, FuzzyScore } from '../../../common/filters.js';
+import { FuzzyScore } from '../../../common/filters.js';
 
 interface IAsyncDataTreeNode<TInput, T> {
 	element: TInput | T;
@@ -221,10 +221,15 @@ class AsyncDataTreeNodeListDragAndDrop<TInput, T> implements IListDragAndDrop<IA
 	}
 }
 
+export interface IAsyncFindResult<T> {
+	element: T;
+	filterdata?: FuzzyScore | LabelFuzzyScore;
+}
+
 export interface IAsyncFindProvider<T> {
 	toggles?: ITreeFindToggleContribution[];
 	placeholder?: string;
-	getFindResults(pattern: string, sessionId: number, token: CancellationToken, toggleStates: { id: string; isChecked: boolean }[]): AsyncIterable<T>;
+	getFindResults(pattern: string, sessionId: number, token: CancellationToken, toggleStates: { id: string; isChecked: boolean }[]): AsyncIterable<IAsyncFindResult<T>>;
 	revealResultInTree?(findElement: T): void;
 }
 
@@ -238,17 +243,28 @@ class AsyncFindTreeNode<T> {
 	constructor(
 		public element: T | undefined,
 		public id: string,
+		private readonly sorter: ITreeSorter<T> | undefined,
 	) { }
 
 	addChild(child: AsyncFindTreeNode<T>): void {
-		this._children.push(child);
+		if (!this.sorter) {
+			this._children.push(child);
+			return;
+		}
+
+		const index = this._children.findIndex(existingChild => this.sorter!.compare(child.element!, existingChild.element!) < 0);
+		if (index !== -1) {
+			this._children.splice(index, 0, child);
+		} else {
+			this._children.push(child);
+		}
 	}
 }
 
 class AsyncFindTree<TInput, T> {
 
 	private cachedNodes = new Map<string, AsyncFindTreeNode<T>>();
-	private readonly root = new AsyncFindTreeNode<T>(undefined, '_AsyncFindTreeRoot_');
+	private readonly root = new AsyncFindTreeNode<T>(undefined, '_AsyncFindTreeRoot_', this.sorter);
 	get rootNodes(): AsyncFindTreeNode<T>[] {
 		return [...this.root.children];
 	}
@@ -262,16 +278,25 @@ class AsyncFindTree<TInput, T> {
 		return this.cachedNodes.size;
 	}
 
+	private _results: IAsyncFindResult<T>[] = [];
+	get results(): IAsyncFindResult<T>[] {
+		return [...this._results];
+	}
+
 	constructor(
 		private readonly dataSource: IAsyncDataSource<TInput, T>,
-		private readonly identityProvider: IIdentityProvider<T>
+		private readonly identityProvider: IIdentityProvider<T>,
+		private readonly sorter?: ITreeSorter<T>,
 	) {
 		if (!dataSource.getParent) {
 			throw new Error('Data source must implement `getParent`');
 		}
 	}
 
-	add(element: T): void {
+	add(result: IAsyncFindResult<T>): void {
+		this._results.push(result);
+
+		const element = result.element;
 		const elementId = this.identityProvider.getId(element).toString();
 		if (this.cachedNodes.has(elementId)) {
 			return;
@@ -279,7 +304,7 @@ class AsyncFindTree<TInput, T> {
 
 		this._totalLeafs++;
 
-		const node = new AsyncFindTreeNode(element, elementId);
+		const node = new AsyncFindTreeNode(element, elementId, this.sorter);
 		this.cachedNodes.set(elementId, node);
 
 		// Set up parents up till root
@@ -303,7 +328,7 @@ class AsyncFindTree<TInput, T> {
 			}
 
 			// create parent node
-			const newParent = new AsyncFindTreeNode(currentParentElement, parentId);
+			const newParent = new AsyncFindTreeNode(currentParentElement, parentId, this.sorter);
 			this.cachedNodes.set(parentId, newParent);
 			newParent.addChild(currentNode);
 
@@ -313,22 +338,23 @@ class AsyncFindTree<TInput, T> {
 }
 
 class AsyncFindFilter<TInput, T> implements IFindFilter<IAsyncDataTreeNode<TInput, T>>, IDisposable {
-	private _pattern: string = '';
-	private _lowercasePattern: string = '';
+
+	pattern: string = '';
+
+	private findFilterData: Map<T, FuzzyScore | LabelFuzzyScore> = new Map();
+
 	private readonly disposables = new DisposableStore();
 
-	get pattern(): string {
-		return this._pattern;
-	}
-	set pattern(pattern: string) {
-		this._pattern = pattern;
-		this._lowercasePattern = pattern.toLowerCase();
-	}
-
 	constructor(
-		private keyboardNavigationLabelProvider: IKeyboardNavigationLabelProvider<T>,
 		private _filter?: ITreeFilter<IAsyncDataTreeNode<TInput, T>, FuzzyScore>,
 	) { }
+
+	setFindResults(findResults: IAsyncFindResult<T>[]): void {
+		this.findFilterData = new Map(findResults.
+			filter(result => result.filterdata !== undefined).
+			map(result => [result.element, result.filterdata!])
+		);
+	}
 
 	filter(element: IAsyncDataTreeNode<TInput, T>, parentVisibility: TreeVisibility): TreeFilterResult<FuzzyScore | LabelFuzzyScore> {
 		let visibility = TreeVisibility.Visible;
@@ -349,25 +375,9 @@ class AsyncFindFilter<TInput, T> implements IFindFilter<IAsyncDataTreeNode<TInpu
 			}
 		}
 
-		if (!this._pattern) {
-			return { data: FuzzyScore.Default, visibility };
-		}
-
-		const label = this.keyboardNavigationLabelProvider.getKeyboardNavigationLabel(element.element as T);
-		const labels = Array.isArray(label) ? label : [label];
-
-		for (const l of labels) {
-			const labelStr: string = l && l.toString();
-			if (typeof labelStr === 'undefined') {
-				return { data: FuzzyScore.Default, visibility };
-			}
-
-			const score = fuzzyScore(this._pattern, this._lowercasePattern, 0, labelStr, labelStr.toLowerCase(), 0, { firstMatchCanBeWeak: true, boostFullMatch: true });
-			if (score) {
-				return labels.length === 1 ?
-					{ data: score, visibility } :
-					{ data: { label: labelStr, score: score }, visibility };
-			}
+		const filterData = this.findFilterData.get(element.element as T);
+		if (filterData !== undefined) {
+			return { data: filterData, visibility };
 		}
 
 		return { data: FuzzyScore.Default, visibility };
@@ -383,7 +393,10 @@ class AsyncFindController<TInput, T, TFilterData> extends AbstractFindController
 	declare protected readonly filter: AsyncFindFilter<TInput, T>;
 	private readonly model: ITreeModel<IAsyncDataTreeNode<TInput, T> | null, TFilterData, IAsyncDataTreeNode<TInput, T> | null>;
 	private readonly nodes = new Map<null | T, IAsyncDataTreeNode<TInput, T>>();
-	private previousTreeScrollTop: number = 0;
+
+	private previousScrollTop: number | undefined;
+	private previousFocus: (IAsyncDataTreeNode<TInput, T> | null)[] = [];
+	private previousSelection: (IAsyncDataTreeNode<TInput, T> | null)[] = [];
 
 	private sessionId: number = 0;
 	private active: boolean = false;
@@ -398,6 +411,7 @@ class AsyncFindController<TInput, T, TFilterData> extends AbstractFindController
 		protected override readonly tree: ObjectTree<IAsyncDataTreeNode<TInput, T>, TFilterData>,
 		private readonly findProvider: IAsyncFindProvider<T>,
 		filter: AsyncFindFilter<TInput, T>,
+		private readonly sorter: ITreeSorter<T> | undefined,
 		private readonly dataSource: IAsyncDataSource<TInput, T>,
 		private readonly identityProvider: IIdentityProvider<T>,
 		contextViewProvider: IContextViewProvider,
@@ -426,7 +440,12 @@ class AsyncFindController<TInput, T, TFilterData> extends AbstractFindController
 
 	private activateFindMode(): void {
 		this.sessionId++;
-		this.previousTreeScrollTop = this.tree.scrollTop;
+
+		// store tree view state
+		this.previousScrollTop = this.tree.scrollTop;
+		this.previousFocus = this.tree.getFocus();
+		this.previousSelection = this.tree.getSelection();
+
 		this.tree.scrollTop = 0;
 		const findModel = this.tree.createNewModel({ filter: this.filter as ITreeFilter<IAsyncDataTreeNode<TInput, T> | null, TFilterData> });
 		this.tree.setModel(findModel);
@@ -439,7 +458,9 @@ class AsyncFindController<TInput, T, TFilterData> extends AbstractFindController
 		if (focus && focus.element && this.findProvider.revealResultInTree) {
 			this.findProvider.revealResultInTree(focus.element as T);
 		} else {
-			this.tree.scrollTop = this.previousTreeScrollTop;
+			this.tree.scrollTop = this.previousScrollTop ?? 0;
+			this.tree.setFocus(this.previousFocus);
+			this.tree.setSelection(this.previousSelection);
 		}
 
 		this.activeTokenSource = undefined;
@@ -462,7 +483,7 @@ class AsyncFindController<TInput, T, TFilterData> extends AbstractFindController
 		this.pocessFindResults(results, this.activeTokenSource.token);
 	}
 
-	private async pocessFindResults(results: AsyncIterable<T>, token: CancellationToken): Promise<void> {
+	private async pocessFindResults(results: AsyncIterable<IAsyncFindResult<T>>, token: CancellationToken): Promise<void> {
 		if (!this.dataSource.getParent || !this.identityProvider) {
 			return;
 		}
@@ -470,7 +491,7 @@ class AsyncFindController<TInput, T, TFilterData> extends AbstractFindController
 		// Remove all nodes
 		this.clearFindResults();
 
-		const findTree = new AsyncFindTree<TInput, T>(this.dataSource, this.identityProvider);
+		const findTree = new AsyncFindTree<TInput, T>(this.dataSource, this.identityProvider, this.sorter);
 		for await (const result of results) {
 			if (token.isCancellationRequested) {
 				return;
@@ -496,6 +517,7 @@ class AsyncFindController<TInput, T, TFilterData> extends AbstractFindController
 				this.setFindModeActive(true);
 				return;
 			} else {
+				this.filter.setFindResults([]);
 				this.tree.setChildren(null, []);
 			}
 		}, 600);
@@ -509,6 +531,7 @@ class AsyncFindController<TInput, T, TFilterData> extends AbstractFindController
 
 		this.schedule(() => {
 			this.setFindModeActive(true);
+			this.filter.setFindResults(findTree.results);
 			this.tree.setChildren(null, rootChildren);
 			this.renderMessage(rootChildren.length === 0);
 			this.alertResults(findTree.totalLeafs);
@@ -782,9 +805,9 @@ export class AsyncDataTree<TInput, T, TFilterData = void> implements IDisposable
 		this.tree.onDidChangeCollapseState(this._onDidChangeCollapseState, this, this.disposables);
 
 		if (asyncFindEnabled) {
-			const findFilter = this.disposables.add(new AsyncFindFilter<TInput, T>(options.keyboardNavigationLabelProvider as any, this.tree.options.filter as ITreeFilter<IAsyncDataTreeNode<TInput, T>, FuzzyScore>));
+			const findFilter = this.disposables.add(new AsyncFindFilter<TInput, T>(this.tree.options.filter as ITreeFilter<IAsyncDataTreeNode<TInput, T>, FuzzyScore>));
 			const findOptions = { styles: options.findWidgetStyles, showNotFoundMessage: options.showNotFoundMessage };
-			this.findController = this.disposables.add(new AsyncFindController(user, this.tree, options.findResultsProvider!, findFilter!, this.dataSource, this.identityProvider!, options.contextViewProvider!, findOptions, node => this.asTreeElement(node)));
+			this.findController = this.disposables.add(new AsyncFindController(user, this.tree, options.findResultsProvider!, findFilter!, this.sorter, this.dataSource, this.identityProvider!, options.contextViewProvider!, findOptions, node => this.asTreeElement(node)));
 
 			this.onDidChangeFindOpenState = this.findController!.onDidChangeOpenState;
 			this.onDidChangeFindMode = Event.None;
