@@ -158,6 +158,7 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 				this.chatOptions.location,
 				{ viewId: this.id },
 				{
+					autoScroll: this.chatOptions.location === ChatAgentLocation.EditingSession,
 					renderFollowups: this.chatOptions.location === ChatAgentLocation.Panel,
 					supportsFileReferences: true,
 					supportsAdditionalParticipants: this.chatOptions.location === ChatAgentLocation.Panel,
@@ -166,7 +167,8 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 						renderTextEditsAsSummary: (uri) => {
 							return this.chatOptions.location === ChatAgentLocation.EditingSession;
 						},
-					}
+					},
+					enableImplicitContext: true
 				},
 				{
 					listForeground: SIDE_BAR_FOREGROUND,

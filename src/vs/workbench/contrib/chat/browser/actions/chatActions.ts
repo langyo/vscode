@@ -10,7 +10,6 @@ import { fromNowByDay } from '../../../../../base/common/date.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { URI } from '../../../../../base/common/uri.js';
 import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { EditorAction2, ServicesAccessor } from '../../../../../editor/browser/editorExtensions.js';
 import { Position } from '../../../../../editor/common/core/position.js';
@@ -39,8 +38,9 @@ import { CHAT_VIEW_ID, IChatWidget, IChatWidgetService, showChatView } from '../
 import { IChatEditorOptions } from '../chatEditor.js';
 import { ChatEditorInput } from '../chatEditorInput.js';
 import { ChatViewPane } from '../chatViewPane.js';
-import { getScreenshotAsVariable } from '../contrib/screenshot.js';
+import { convertBufferToScreenshotVariable } from '../contrib/screenshot.js';
 import { clearChatEditor } from './chatClear.js';
+import { IHostService } from '../../../../services/host/browser/host.js';
 
 export const CHAT_CATEGORY = localize2('chat.category', 'Chat');
 export const CHAT_OPEN_ACTION_ID = 'workbench.action.chat.open';
@@ -63,12 +63,6 @@ export interface IChatViewOpenOptions {
 	 * Whether a screenshot of the focused window should be taken and attached
 	 */
 	attachScreenshot?: boolean;
-}
-
-export interface IChatImageAttachment {
-	id: string;
-	name: string;
-	value: URI | Uint8Array;
 }
 
 export interface IChatViewOpenRequestEntry {
@@ -106,7 +100,9 @@ class OpenChatGlobalAction extends Action2 {
 		opts = typeof opts === 'string' ? { query: opts } : opts;
 
 		const chatService = accessor.get(IChatService);
-		const chatWidget = await showChatView(accessor.get(IViewsService));
+		const viewsService = accessor.get(IViewsService);
+		const hostService = accessor.get(IHostService);
+		const chatWidget = await showChatView(viewsService);
 		if (!chatWidget) {
 			return;
 		}
@@ -116,9 +112,9 @@ class OpenChatGlobalAction extends Action2 {
 			}
 		}
 		if (opts?.attachScreenshot) {
-			const screenshot = await getScreenshotAsVariable();
+			const screenshot = await hostService.getScreenshot();
 			if (screenshot) {
-				chatWidget.attachmentModel.addContext(screenshot);
+				chatWidget.attachmentModel.addContext(convertBufferToScreenshotVariable(screenshot));
 			}
 		}
 		if (opts?.query) {
@@ -491,7 +487,11 @@ export class ChatCommandCenterRendering implements IWorkbenchContribution {
 			return instantiationService.createInstance(
 				DropdownWithPrimaryActionViewItem,
 				primaryAction, dropdownAction, action.actions,
-				'', options
+				'',
+				{
+					...options,
+					skipTelemetry: true, // already handled by the workbench action bar
+				}
 			);
 
 		}, agentService.onDidChangeAgents));

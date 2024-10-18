@@ -72,8 +72,10 @@ export interface IChatRequestViewModel {
 	readonly variables: IChatRequestVariableEntry[];
 	currentRenderedHeight: number | undefined;
 	readonly contentReferences?: ReadonlyArray<IChatContentReference>;
+	readonly workingSet?: ReadonlyArray<URI>;
 	readonly confirmation?: string;
 	readonly isDisabled?: boolean;
+	readonly isCompleteAddedRequest: boolean;
 }
 
 export interface IChatResponseMarkdownRenderData {
@@ -176,6 +178,7 @@ export interface IChatResponseViewModel {
 	readonly result?: IChatAgentResult;
 	readonly contentUpdateTimings?: IChatLiveUpdateData;
 	readonly isDisabled: boolean;
+	readonly isCompleteAddedRequest: boolean;
 	renderData?: IChatResponseRenderData;
 	currentRenderedHeight: number | undefined;
 	setVote(vote: ChatAgentVoteDirection): void;
@@ -281,7 +284,7 @@ export class ChatViewModel extends Disposable implements IChatViewModel {
 	}
 
 	private onAddResponse(responseModel: IChatResponseModel) {
-		const response = this.instantiationService.createInstance(ChatResponseViewModel, responseModel);
+		const response = this.instantiationService.createInstance(ChatResponseViewModel, responseModel, this);
 		this._register(response.onDidChange(() => {
 			if (response.isComplete) {
 				this.updateCodeBlockTextModels(response);
@@ -363,12 +366,20 @@ export class ChatRequestViewModel implements IChatRequestViewModel {
 		return this._model.response?.contentReferences;
 	}
 
+	get workingSet() {
+		return this._model.workingSet;
+	}
+
 	get confirmation() {
 		return this._model.confirmation;
 	}
 
 	get isDisabled() {
 		return this._model.isDisabled;
+	}
+
+	get isCompleteAddedRequest() {
+		return this._model.isCompleteAddedRequest;
 	}
 
 	currentRenderedHeight: number | undefined;
@@ -393,7 +404,10 @@ export class ChatResponseViewModel extends Disposable implements IChatResponseVi
 	}
 
 	get dataId() {
-		return this._model.id + `_${this._modelChangeCount}` + `_${ChatModelInitState[this._model.session.initState]}`;
+		return this._model.id +
+			`_${this._modelChangeCount}` +
+			`_${ChatModelInitState[this._model.session.initState]}` +
+			(this.isLast ? '_last' : '');
 	}
 
 	get sessionId() {
@@ -461,6 +475,10 @@ export class ChatResponseViewModel extends Disposable implements IChatResponseVi
 		return this._model.isDisabled;
 	}
 
+	get isCompleteAddedRequest() {
+		return this._model.isCompleteAddedRequest;
+	}
+
 	get replyFollowups() {
 		return this._model.followups?.filter((f): f is IChatFollowup => f.kind === 'reply');
 	}
@@ -487,6 +505,10 @@ export class ChatResponseViewModel extends Disposable implements IChatResponseVi
 
 	get isStale() {
 		return this._model.isStale;
+	}
+
+	get isLast(): boolean {
+		return this._chatViewModel.getItems().at(-1) === this;
 	}
 
 	renderData: IChatResponseRenderData | undefined = undefined;
@@ -521,6 +543,7 @@ export class ChatResponseViewModel extends Disposable implements IChatResponseVi
 
 	constructor(
 		private readonly _model: IChatResponseModel,
+		private readonly _chatViewModel: IChatViewModel,
 		@ILogService private readonly logService: ILogService,
 		@IChatAgentNameService private readonly chatAgentNameService: IChatAgentNameService,
 	) {

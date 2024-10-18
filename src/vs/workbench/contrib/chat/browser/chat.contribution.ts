@@ -76,6 +76,7 @@ import './contrib/chatInputEditorHover.js';
 import { ChatImplicitContextContribution } from './contrib/chatImplicitContext.js';
 import { LanguageModelToolsService } from './languageModelToolsService.js';
 import { ChatViewsWelcomeHandler } from './viewsWelcome/chatViewsWelcomeContributions.js';
+import { ILanguageModelIgnoredFilesService, LanguageModelIgnoredFilesService } from '../common/ignoredFiles.js';
 
 
 // Register configuration
@@ -123,20 +124,23 @@ configurationRegistry.registerConfiguration({
 			markdownDescription: nls.localize('chat.editing.alwaysSaveWithGeneratedChanges', "Whether to always ask before saving files with changes made by chat."),
 			default: false,
 		},
-		'chat.experimental.variables.editor': {
+		'chat.editing.confirmEditRequestRemoval': {
 			type: 'boolean',
-			description: nls.localize('chat.experimental.variables.editor', "Enables variables for editor chat."),
-			default: true
+			scope: ConfigurationScope.APPLICATION,
+			markdownDescription: nls.localize('chat.editing.confirmEditRequestRemoval', "Whether to show a confirmation before removing a request and its associated edits."),
+			default: true,
 		},
-		'chat.experimental.variables.notebook': {
+		'chat.editing.confirmEditRequestRetry': {
 			type: 'boolean',
-			description: nls.localize('chat.experimental.variables.notebook', "Enables variables for notebook chat."),
-			default: true
+			scope: ConfigurationScope.APPLICATION,
+			markdownDescription: nls.localize('chat.editing.confirmEditRequestRetry', "Whether to show a confirmation before retrying a request and its associated edits."),
+			default: true,
 		},
-		'chat.experimental.variables.terminal': {
+		'chat.editing.experimental.enableRestoreFile': {
 			type: 'boolean',
-			description: nls.localize('chat.experimental.variables.terminal', "Enables variables for terminal chat."),
-			default: false
+			scope: ConfigurationScope.APPLICATION,
+			markdownDescription: nls.localize('chat.editing.enableRestoreFile', "Whether to show a toggle to restore an earlier version of a file that was edited in a chat editing session request."),
+			default: false,
 		},
 		'chat.experimental.detectParticipant.enabled': {
 			type: 'boolean',
@@ -332,3 +336,4 @@ registerSingleton(IChatCodeBlockContextProviderService, ChatCodeBlockContextProv
 registerSingleton(ICodeMapperService, CodeMapperService, InstantiationType.Delayed);
 registerSingleton(IChatEditingService, ChatEditingService, InstantiationType.Delayed);
 registerSingleton(IChatMarkdownAnchorService, ChatMarkdownAnchorService, InstantiationType.Delayed);
+registerSingleton(ILanguageModelIgnoredFilesService, LanguageModelIgnoredFilesService, InstantiationType.Delayed);
